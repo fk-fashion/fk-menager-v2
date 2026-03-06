@@ -7,7 +7,8 @@ import {
   browserLocalPersistence, setPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, onSnapshot, collection, addDoc
+  getFirestore, doc, getDoc, setDoc, onSnapshot, collection, addDoc,
+  enableIndexedDbPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── IMAGEKIT CONFIG ──────────────────────────────────────────────
@@ -248,7 +249,9 @@ function getFirebase() {
     _app  = initializeApp(FIREBASE_CONFIG);
     _auth = getAuth(_app);
     _db   = getFirestore(_app);
-    // Explicitly persist auth across page reloads (survives browser close too)
+    // Enable offline persistence so Firestore works without internet
+    enableIndexedDbPersistence(_db).catch(() => {});
+    // Persist auth session across browser close/reopen
     setPersistence(_auth, browserLocalPersistence).catch(() => {});
   }
   return { auth: _auth, db: _db };
@@ -3924,8 +3927,18 @@ function AdminApp({ onBack }) {
   }, []);
 
   useEffect(() => {
-    // Offline safety net — if Firebase auth doesn't resolve within 4s and we're offline,
-    // load from localStorage immediately so app doesn't freeze
+    // If already offline when app loads — skip Firebase entirely, load local immediately
+    if (!navigator.onLine) {
+      const local = loadLocal();
+      if (local && local.products) {
+        setDataRaw(local);
+        setUser({ email: ADMIN_EMAILS[0], isAnonymous: false, _offlineMode: true });
+        setDbStatus("offline");
+        return; // don't even touch Firebase
+      }
+    }
+
+    // Safety net — if Firebase auth doesn't resolve within 2s while offline
     const offlineTimer = setTimeout(() => {
       if (!navigator.onLine) {
         const local = loadLocal();
@@ -3935,7 +3948,7 @@ function AdminApp({ onBack }) {
           setDbStatus("offline");
         }
       }
-    }, 4000);
+    }, 2000);
 
     try {
       const { auth } = getFirebase();
