@@ -359,6 +359,33 @@ async function saveOrderToUserProfile(uid, order) {
 }
 const STORAGE_KEY = "fk_fashion_local_v7";
 const IMG_KEY = "fk_fashion_imgs_v7";
+const OFFLINE_QUEUE_KEY = "fk_offline_queue_v1";
+
+// ─── OFFLINE QUEUE ────────────────────────────────────────────────
+// Saves pending Firestore writes to localStorage when offline.
+// Auto-flushes when internet returns.
+function getOfflineQueue() {
+  try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || "[]"); } catch(_) { return []; }
+}
+function addToOfflineQueue(data) {
+  try {
+    // We only need the latest full state — one entry is enough
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify([{ data, ts: Date.now() }]));
+  } catch(_) {}
+}
+function clearOfflineQueue() {
+  try { localStorage.removeItem(OFFLINE_QUEUE_KEY); } catch(_) {}
+}
+async function flushOfflineQueue() {
+  const queue = getOfflineQueue();
+  if (!queue.length) return false;
+  try {
+    const latest = queue[queue.length - 1];
+    await saveToFirebase(latest.data);
+    clearOfflineQueue();
+    return true;
+  } catch(_) { return false; }
+}
 
 function saveImagesLocal(products) {
   try {
@@ -774,7 +801,7 @@ function Sel({ label, t, children, ...p }) {
     <div className="mb-3">
       {label && <label style={{display:"block",fontSize:11,fontWeight:600,marginBottom:4,color:t.dark?"rgba(255,255,255,0.55)":"#4b5563"}}>{label}</label>}
       <select className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400`}
-        style={{fontSize:"16px",color:inputCol,background:inputBg,borderColor:inputBdr,borderWidth:1,borderStyle:"solid",width:"100%"}} {...p}>{children}</select>
+        style={{fontSize:"16px",color:inputCol,background:inputBg,borderColor:inputBdr,borderWidth:1,borderStyle:"solid",width:"100%",colorScheme:t.dark?"dark":"light"}} {...p}>{children}</select>
     </div>
   );
 }
@@ -1894,7 +1921,7 @@ function Dashboard({ data, setData, t, showReport, setSection }) {
 
 // ─── ADMIN: CATALOGUE (multi-image) ───────────────────────────────
 const BP = {name:"",nameBn:"",category:"Bridal",price:"",stock:"",desc:"",sku:"",stockStatus:"Ready",colorVariants:[{color:"",images:[]}]};
-const STOCK_STATUSES = ["Ready","Need to Make","Making","Need Stock","Coming Soon","Pre-Order"];
+const STOCK_STATUSES = ["Ready","Making","Need Stock","Pre-Order"];
 function Catalogue({ data, setData, t, showReport }) {
   const [modal, setModal] = useState(false), [editId, setEditId] = useState(null), [viewP, setViewP] = useState(null);
   const [filter, setFilter] = useState("All"), [search, setSearch] = useState(""), [sort, setSort] = useState("name");
@@ -1970,7 +1997,7 @@ function Catalogue({ data, setData, t, showReport }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${t.pill}`}>{p.category}</span>
                   {colorCount > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full ${t.dark?"bg-purple-900/40 text-purple-300":"bg-purple-50 text-purple-600"}`}>{colorCount} color{colorCount>1?"s":""}</span>}
                   {p.stockStatus && p.stockStatus !== "Ready" && (() => {
-                    const ssC = {"Making":"bg-blue-100 text-blue-700","Need to Make":"bg-orange-100 text-orange-700","Need Stock":"bg-yellow-100 text-yellow-800","Coming Soon":"bg-purple-100 text-purple-700","Pre-Order":"bg-pink-100 text-pink-700"};
+                    const ssC = {"Making":"bg-blue-100 text-blue-700","Need Stock":"bg-yellow-100 text-yellow-800","Pre-Order":"bg-pink-100 text-pink-700"};
                     return <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${ssC[p.stockStatus]||"bg-gray-100 text-gray-600"}`}>📌 {p.stockStatus}</span>;
                   })()}
                 </div>
@@ -2131,7 +2158,7 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
     onSave(row);
   };
 
-  const iStyle = { fontSize:"16px", color:t.dark?"#f3f4f6":"#111827", background:t.dark?"#374151":"#fff" };
+  const iStyle = { fontSize:"16px", color:t.dark?"#f3f4f6":"#111827", background:t.dark?"#374151":"#fff", colorScheme:t.dark?"dark":"light" };
 
   return (
     <Modal title={editOrder ? "Edit Order" : "New Order"} onClose={onClose} t={t}>
@@ -2198,9 +2225,7 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
                 const statusColors = {
                   "Ready":       {bg:"#f0fdf4",border:"#bbf7d0",color:"#16a34a"},
                   "Making":      {bg:"#eff6ff",border:"#bfdbfe",color:"#2563eb"},
-                  "Need to Make":{bg:"#fff7ed",border:"#fed7aa",color:"#ea580c"},
                   "Need Stock":  {bg:"#fef3c7",border:"#fde68a",color:"#d97706"},
-                  "Coming Soon": {bg:"#f5f3ff",border:"#ddd6fe",color:"#7c3aed"},
                   "Pre-Order":   {bg:"#fdf2f8",border:"#fce7f3",color:"#be185d"},
                 };
                 const sc = oos ? {bg:"#fef2f2",border:"#fecaca",color:"#dc2626"} : low ? {bg:"#fff7ed",border:"#fed7aa",color:"#ea580c"} : statusColors[ss]||statusColors["Ready"];
@@ -3726,6 +3751,8 @@ const ADMIN_CSS = `
     background:rgba(255,255,255,0.07) !important; color:#e8e6f8 !important;
     border-color:rgba(255,255,255,0.12) !important;
   }
+  .adm-dark select { color-scheme: dark; }
+  .adm-dark select option { background:#1e293b !important; color:#e8e6f8 !important; }
   .adm-dark input::placeholder, .adm-dark textarea::placeholder { color:rgba(255,255,255,0.25) !important; }
   .adm-dark input:focus, .adm-dark select:focus, .adm-dark textarea:focus {
     outline:none !important;
@@ -3835,9 +3862,23 @@ function AdminApp({ onBack }) {
   const [user, setUser] = useState(undefined);
   const [dbStatus, setDbStatus] = useState("local");
   const [syncMsg, setSyncMsg] = useState("");
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const t = getTheme(dark);
   const saveTimerRef = useRef(null);
   const unsub2Ref = useRef(null);
+
+  // Track online/offline and auto-flush queue when back online
+  useEffect(() => {
+    const goOnline = async () => {
+      setIsOnline(true);
+      const flushed = await flushOfflineQueue();
+      if (flushed) { setDbStatus("synced"); setSyncMsg("Back online — synced ✓"); setTimeout(()=>setSyncMsg(""),3000); }
+    };
+    const goOffline = () => { setIsOnline(false); setDbStatus("offline"); setSyncMsg("Offline — saving locally"); };
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+  }, []);
 
   useEffect(() => { setCachedData(data); }, [data, setCachedData]);
 
@@ -3877,7 +3918,23 @@ function AdminApp({ onBack }) {
       saveLocal(next);
       if(saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async()=>{
-        try{ await saveToFirebase(next); setDbStatus("synced"); } catch(_){ setDbStatus("error"); }
+        if (!navigator.onLine) {
+          addToOfflineQueue(next);
+          setDbStatus("offline");
+          setSyncMsg("📴 Offline — saved locally, will sync when online");
+          return;
+        }
+        try{
+          await saveToFirebase(next);
+          clearOfflineQueue();
+          setDbStatus("synced");
+          setSyncMsg("");
+        } catch(_){
+          // Save to queue so it syncs when back online
+          addToOfflineQueue(next);
+          setDbStatus("offline");
+          setSyncMsg("📴 Offline — saved locally");
+        }
       }, 1200);
       return next;
     });
@@ -3940,9 +3997,9 @@ function AdminApp({ onBack }) {
     );
   }
 
-  const syncColor = dbStatus==="synced"?"#4ade80":dbStatus==="syncing"?"#fbbf24":dbStatus==="error"?"#f87171":"#64748b";
-  const syncIcon  = dbStatus==="synced"?"●":dbStatus==="syncing"?"◌":dbStatus==="error"?"⚠":"●";
-  const syncLabel = dbStatus==="synced"?"Synced":dbStatus==="syncing"?"Saving...":dbStatus==="error"?"Error":"Local";
+  const syncColor = dbStatus==="synced"?"#4ade80":dbStatus==="syncing"?"#fbbf24":dbStatus==="error"?"#f87171":dbStatus==="offline"?"#fb923c":"#64748b";
+  const syncIcon  = dbStatus==="synced"?"●":dbStatus==="syncing"?"◌":dbStatus==="error"?"⚠":dbStatus==="offline"?"📴":"●";
+  const syncLabel = dbStatus==="synced"?"Synced":dbStatus==="syncing"?"Saving...":dbStatus==="error"?"Error":dbStatus==="offline"?"Offline":"Local";
 
   const bg         = dark ? "#060610" : "#f0f2f7";
   const sidebarBg  = dark ? "#06060f" : "#ffffff";
@@ -4148,6 +4205,8 @@ function AdminApp({ onBack }) {
 
           {dbStatus==="error"&&<div style={{background:"rgba(239,68,68,0.07)",borderBottom:"1px solid rgba(239,68,68,0.15)",color:"#f87171",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>⚠️ Cloud save failed — data saved locally</div>}
           {dbStatus==="syncing"&&<div style={{background:"rgba(245,158,11,0.05)",borderBottom:"1px solid rgba(245,158,11,0.15)",color:"#fbbf24",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>⏳ Saving...</div>}
+          {dbStatus==="offline"&&<div style={{background:"rgba(251,146,60,0.08)",borderBottom:"1px solid rgba(251,146,60,0.2)",color:"#fb923c",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>📴 Offline — changes saved locally, will auto-sync when back online</div>}
+          {syncMsg&&dbStatus==="synced"&&<div style={{background:"rgba(74,222,128,0.07)",borderBottom:"1px solid rgba(74,222,128,0.15)",color:"#4ade80",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>{syncMsg}</div>}
         </div>{/* end adm-topbar */}
 
         {/* Page content */}
