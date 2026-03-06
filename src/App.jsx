@@ -3882,6 +3882,41 @@ function AdminApp({ onBack }) {
 
   useEffect(() => { setCachedData(data); }, [data, setCachedData]);
 
+  // ── PWA: inject manifest + register service worker so app works offline ──
+  useEffect(() => {
+    // Inject web app manifest dynamically
+    if (!document.querySelector('link[rel="manifest"]')) {
+      const manifest = {
+        name: APP_NAME, short_name: "FK Admin",
+        start_url: "/admin", display: "standalone",
+        background_color: "#060610", theme_color: "#060610",
+        icons: [{ src: "https://ik.imagekit.io/jwpfdkm8y/fk_fashion/icon-192.png", sizes: "192x192", type: "image/png" },
+                { src: "https://ik.imagekit.io/jwpfdkm8y/fk_fashion/icon-512.png", sizes: "512x512", type: "image/png" }]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("link");
+      link.rel = "manifest"; link.href = url;
+      document.head.appendChild(link);
+    }
+    // Add mobile meta tags for full-screen experience
+    const addMeta = (name, content) => {
+      if (!document.querySelector(`meta[name="${name}"]`)) {
+        const m = document.createElement("meta"); m.name = name; m.content = content;
+        document.head.appendChild(m);
+      }
+    };
+    addMeta("mobile-web-app-capable", "yes");
+    addMeta("apple-mobile-web-app-capable", "yes");
+    addMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
+    addMeta("apple-mobile-web-app-title", "FK Admin");
+    addMeta("theme-color", "#060610");
+    // Register service worker for offline support
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
+
   // Lock body scroll for admin, restore for store
   useEffect(() => {
     document.body.classList.add("adm-active");
@@ -4203,10 +4238,6 @@ function AdminApp({ onBack }) {
           );
         })()}
 
-          {dbStatus==="error"&&<div style={{background:"rgba(239,68,68,0.07)",borderBottom:"1px solid rgba(239,68,68,0.15)",color:"#f87171",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>⚠️ Cloud save failed — data saved locally</div>}
-          {dbStatus==="syncing"&&<div style={{background:"rgba(245,158,11,0.05)",borderBottom:"1px solid rgba(245,158,11,0.15)",color:"#fbbf24",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>⏳ Saving...</div>}
-          {dbStatus==="offline"&&<div style={{background:"rgba(251,146,60,0.08)",borderBottom:"1px solid rgba(251,146,60,0.2)",color:"#fb923c",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>📴 Offline — changes saved locally, will auto-sync when back online</div>}
-          {syncMsg&&dbStatus==="synced"&&<div style={{background:"rgba(74,222,128,0.07)",borderBottom:"1px solid rgba(74,222,128,0.15)",color:"#4ade80",fontSize:11,textAlign:"center",padding:"5px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.05em",textTransform:"uppercase"}}>{syncMsg}</div>}
         </div>{/* end adm-topbar */}
 
         {/* Page content */}
@@ -4228,6 +4259,30 @@ function AdminApp({ onBack }) {
             );
           })}
         </nav>
+
+        {/* ── SYNC TOAST: floats at very top, outside topbar, no layout impact ── */}
+        {(dbStatus==="offline"||dbStatus==="error"||(syncMsg&&dbStatus==="synced")) && (
+          <div style={{
+            position:"fixed",top:0,left:0,right:0,zIndex:9999,
+            pointerEvents:"none",
+          }}>
+            {dbStatus==="offline" && (
+              <div style={{background:"rgba(30,15,0,0.97)",borderBottom:"2px solid #fb923c",color:"#fb923c",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                📴 Offline — all changes saved locally · auto-syncs when back online
+              </div>
+            )}
+            {dbStatus==="error" && (
+              <div style={{background:"rgba(30,0,0,0.97)",borderBottom:"2px solid #f87171",color:"#f87171",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase"}}>
+                ⚠️ Save failed — data kept locally
+              </div>
+            )}
+            {syncMsg&&dbStatus==="synced" && (
+              <div style={{background:"rgba(0,20,10,0.97)",borderBottom:"2px solid #4ade80",color:"#4ade80",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase"}}>
+                {syncMsg}
+              </div>
+            )}
+          </div>
+        )}
 
       </main>
     </div>
