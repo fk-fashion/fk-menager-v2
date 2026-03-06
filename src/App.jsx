@@ -3924,16 +3924,31 @@ function AdminApp({ onBack }) {
   }, []);
 
   useEffect(() => {
+    // Offline safety net — if Firebase auth doesn't resolve within 4s,
+    // assume we're offline and load from local data immediately
+    const offlineTimer = setTimeout(() => {
+      if (!navigator.onLine) {
+        const local = loadLocal();
+        if (local && local.products) {
+          setDataRaw(local);
+          setUser({ email: ADMIN_EMAILS[0], isAnonymous: false, _offlineMode: true });
+          setDbStatus("offline");
+          setSyncMsg("");
+        }
+      }
+    }, 4000);
+
     try {
       const { auth } = getFirebase();
       const unsub = onAuthStateChanged(auth, async u => {
+        clearTimeout(offlineTimer);
         setUser(u);
         const isAuthorizedAdmin = u && !u.isAnonymous && ADMIN_EMAILS.includes(u.email?.toLowerCase());
         if (isAuthorizedAdmin) {
           setDbStatus("syncing"); setSyncMsg("Loading...");
           const fbData = await loadFromFirebase();
-          if (fbData) { setDataRaw(fbData); setCachedData(fbData); saveLocal(fbData); setDbStatus("synced"); setSyncMsg("Synced ✓"); }
-          else { await saveToFirebase(data); setDbStatus("synced"); setSyncMsg("Uploaded ✓"); }
+          if (fbData) { setDataRaw(fbData); setCachedData(fbData); saveLocal(fbData); setDbStatus("synced"); setSyncMsg("Synced ✓"); setTimeout(()=>setSyncMsg(""),2500); }
+          else { await saveToFirebase(data); setDbStatus("synced"); setSyncMsg("Uploaded ✓"); setTimeout(()=>setSyncMsg(""),2500); }
           const { db } = getFirebase();
           if (unsub2Ref.current) unsub2Ref.current();
           unsub2Ref.current = onSnapshot(doc(db,"fk_fashion","data"), snap => {
@@ -3943,8 +3958,8 @@ function AdminApp({ onBack }) {
           setDbStatus("local");
         }
       });
-      return ()=>{ unsub(); if (unsub2Ref.current) unsub2Ref.current(); };
-    } catch(_){ setDbStatus("local"); setUser(null); }
+      return ()=>{ clearTimeout(offlineTimer); unsub(); if (unsub2Ref.current) unsub2Ref.current(); };
+    } catch(_){ clearTimeout(offlineTimer); setDbStatus("local"); setUser(null); }
   }, []);
 
   const setData = useCallback(updater => {
@@ -4002,9 +4017,12 @@ function AdminApp({ onBack }) {
           <div style={{width:64,height:64,borderRadius:18,background:"linear-gradient(135deg,#f43f5e,#e11d48)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 20px",boxShadow:"0 0 30px rgba(244,63,94,0.5)"}}>🌸</div>
           <div style={{color:"#e8e6f8",fontWeight:700,fontSize:18,letterSpacing:"0.12em",fontFamily:"'Rajdhani',sans-serif",textTransform:"uppercase"}}>{APP_NAME}</div>
           <div style={{color:"rgba(255,255,255,0.3)",fontSize:10,marginTop:6,letterSpacing:"0.25em",fontWeight:600,textTransform:"uppercase"}}>ADMIN PANEL</div>
-          <div style={{display:"flex",gap:6,justifyContent:"center",marginTop:20}}>
-            {[0,1,2].map(i=>(<div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#f43f5e",animation:`neonPulse 1.4s ease-in-out ${i*0.22}s infinite`}} />))}
-          </div>
+          {!navigator.onLine
+            ? <div style={{color:"#fb923c",fontSize:11,marginTop:16,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>📴 Offline — loading local data...</div>
+            : <div style={{display:"flex",gap:6,justifyContent:"center",marginTop:20}}>
+                {[0,1,2].map(i=>(<div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#f43f5e",animation:`neonPulse 1.4s ease-in-out ${i*0.22}s infinite`}} />))}
+              </div>
+          }
         </div>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@700&family=Space+Grotesk:wght@400;600&display=swap');@keyframes neonPulse{0%,100%{opacity:0.3;transform:scale(0.7)}50%{opacity:1;transform:scale(1.1)}}`}</style>
       </div>
@@ -4013,7 +4031,7 @@ function AdminApp({ onBack }) {
   if (!user) return <LoginScreen onBack={onBack} />;
 
   const isAnon = user.isAnonymous;
-  const isAllowed = !isAnon && ADMIN_EMAILS.includes(user.email?.toLowerCase());
+  const isAllowed = !isAnon && (user._offlineMode || ADMIN_EMAILS.includes(user.email?.toLowerCase()));
   if (!isAllowed) {
     return (
       <div style={{minHeight:"100dvh",background:"#060610",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Space Grotesk',system-ui,sans-serif",padding:20,position:"relative",overflow:"hidden"}}>
@@ -4260,25 +4278,51 @@ function AdminApp({ onBack }) {
           })}
         </nav>
 
-        {/* ── SYNC TOAST: floats at very top, outside topbar, no layout impact ── */}
+        {/* ── SYNC TOAST: pill below topbar+alerts, centered, auto-hides ── */}
         {(dbStatus==="offline"||dbStatus==="error"||(syncMsg&&dbStatus==="synced")) && (
           <div style={{
-            position:"fixed",top:0,left:0,right:0,zIndex:9999,
-            pointerEvents:"none",
+            position:"fixed",
+            // Below topbar (56px) + alert row (up to ~36px) + a little breathing room
+            top: "calc(56px + env(safe-area-inset-top, 0px) + 40px)",
+            left:"50%", transform:"translateX(-50%)",
+            zIndex:9999, pointerEvents:"none",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:4,
           }}>
             {dbStatus==="offline" && (
-              <div style={{background:"rgba(30,15,0,0.97)",borderBottom:"2px solid #fb923c",color:"#fb923c",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                📴 Offline — all changes saved locally · auto-syncs when back online
+              <div style={{
+                background:"rgba(20,10,0,0.95)", border:"1px solid #fb923c",
+                color:"#fb923c", fontSize:11, fontWeight:700,
+                fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.07em", textTransform:"uppercase",
+                padding:"6px 16px", borderRadius:20,
+                boxShadow:"0 4px 16px rgba(0,0,0,0.5)", whiteSpace:"nowrap",
+                backdropFilter:"blur(12px)",
+              }}>
+                📴 Offline — saved locally, auto-syncs when back online
               </div>
             )}
             {dbStatus==="error" && (
-              <div style={{background:"rgba(30,0,0,0.97)",borderBottom:"2px solid #f87171",color:"#f87171",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase"}}>
+              <div style={{
+                background:"rgba(20,0,0,0.95)", border:"1px solid #f87171",
+                color:"#f87171", fontSize:11, fontWeight:700,
+                fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.07em", textTransform:"uppercase",
+                padding:"6px 16px", borderRadius:20,
+                boxShadow:"0 4px 16px rgba(0,0,0,0.5)", whiteSpace:"nowrap",
+                backdropFilter:"blur(12px)",
+              }}>
                 ⚠️ Save failed — data kept locally
               </div>
             )}
-            {syncMsg&&dbStatus==="synced" && (
-              <div style={{background:"rgba(0,20,10,0.97)",borderBottom:"2px solid #4ade80",color:"#4ade80",fontSize:11,textAlign:"center",padding:"6px 12px",fontWeight:700,fontFamily:"'Rajdhani',sans-serif",letterSpacing:"0.07em",textTransform:"uppercase"}}>
-                {syncMsg}
+            {syncMsg && dbStatus==="synced" && (
+              <div style={{
+                background:"rgba(0,15,5,0.95)", border:"1px solid #4ade80",
+                color:"#4ade80", fontSize:11, fontWeight:700,
+                fontFamily:"'Rajdhani',sans-serif", letterSpacing:"0.07em", textTransform:"uppercase",
+                padding:"6px 16px", borderRadius:20,
+                boxShadow:"0 4px 16px rgba(0,0,0,0.5)", whiteSpace:"nowrap",
+                backdropFilter:"blur(12px)",
+                animation:"fadeIn 0.3s ease",
+              }}>
+                ✓ {syncMsg}
               </div>
             )}
           </div>
