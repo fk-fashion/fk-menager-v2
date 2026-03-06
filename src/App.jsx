@@ -774,7 +774,7 @@ function Sel({ label, t, children, ...p }) {
     <div className="mb-3">
       {label && <label style={{display:"block",fontSize:11,fontWeight:600,marginBottom:4,color:t.dark?"rgba(255,255,255,0.55)":"#4b5563"}}>{label}</label>}
       <select className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400`}
-        style={{fontSize:"16px",color:inputCol,background:inputBg,borderColor:inputBdr,borderWidth:1,borderStyle:"solid",width:"100%",colorScheme:t.dark?"dark":"light"}} {...p}>{children}</select>
+        style={{fontSize:"16px",color:inputCol,background:inputBg,borderColor:inputBdr,borderWidth:1,borderStyle:"solid",width:"100%"}} {...p}>{children}</select>
     </div>
   );
 }
@@ -2100,6 +2100,11 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
     }
     setForm(p => ({ ...p, items }));
   };
+  // Stock info helper
+  const getStock = (productName) => {
+    const pr = data.products.find(x => x.name === productName);
+    return pr ? pr.stock : null;
+  };
   const addItem = () => setForm(p => ({ ...p, items: [...p.items, { ...EMPTY_ITEM }] }));
   const delItem = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
 
@@ -2109,6 +2114,15 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
   const save = () => {
     if (!(form.customer || "").trim()) { alert("Please enter customer name."); return; }
     if (!form.items.length || !form.items[0].product) { alert("Please add at least one product."); return; }
+    // Stock check
+    for (const it of form.items) {
+      if (!it.product) continue;
+      const pr = data.products.find(x => x.name === it.product);
+      if (pr && pr.stock === 0) {
+        alert(`⛔ "${it.product}" is out of stock and cannot be ordered.`);
+        return;
+      }
+    }
     const cleanItems = form.items.map(it => ({
       product: it.product, color: it.color || "",
       qty: +it.qty || 1, unitPrice: +it.unitPrice || 0, subtotal: +it.subtotal || 0,
@@ -2123,7 +2137,7 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
     onSave(row);
   };
 
-  const iStyle = { fontSize:"16px", color:t.dark?"#f3f4f6":"#111827", background:t.dark?"#374151":"#fff", colorScheme:t.dark?"dark":"light" };
+  const iStyle = { fontSize:"16px", color:t.dark?"#f3f4f6":"#111827", background:t.dark?"#374151":"#fff" };
 
   return (
     <Modal title={editOrder ? "Edit Order" : "New Order"} onClose={onClose} t={t}>
@@ -2171,8 +2185,16 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
               <select value={item.product} onChange={e=>updItem(i,"product",e.target.value)}
                 className={`w-full border rounded-lg px-2 py-1.5 text-sm ${t.input}`} style={iStyle}>
                 <option value="">-- Select product --</option>
-                {data.products.map(p=><option key={p.id} value={p.name}>{p.name} (৳{p.price})</option>)}
+                {data.products.map(p=><option key={p.id} value={p.name} disabled={p.stock===0}>{p.name} (৳{p.price}) {p.stock===0?"— OUT OF STOCK":`— ${p.stock} left`}</option>)}
               </select>
+              {/* Stock warning below select */}
+              {item.product && (() => {
+                const st = getStock(item.product);
+                if (st === null) return null;
+                if (st === 0) return <div style={{marginTop:4,fontSize:11,fontWeight:700,color:"#ef4444",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,padding:"4px 8px"}}>⛔ This product is out of stock</div>;
+                if (st <= 5) return <div style={{marginTop:4,fontSize:11,fontWeight:700,color:"#f97316",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"4px 8px"}}>⚠️ Only {st} left in stock</div>;
+                return <div style={{marginTop:4,fontSize:11,color:"#16a34a",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:6,padding:"4px 8px"}}>✓ {st} in stock</div>;
+              })()}
             </div>
             {/* Color picker */}
             {colorOpts.length > 0 && (
@@ -2274,7 +2296,35 @@ function Orders({ data, setData, t, showReport }) {
     });
     setCDel(null);
   };
-  const chgSt = (id,s) => setData(p=>({...p,orders:p.orders.map(o=>o.id===id?{...o,status:s}:o)}));
+  const chgSt = (id, s) => setData(p => {
+    const order = p.orders.find(o => o.id === id);
+    if (!order) return p;
+    const prevStatus = order.status;
+    const nowDelivered = s === "Delivered";
+    const wasDelivered = prevStatus === "Delivered";
+    // Get items from order
+    const items = order.items && order.items.length > 0
+      ? order.items
+      : [{ product: order.product, qty: order.qty || 1 }];
+    // Update products stock
+    let products = p.products;
+    if (nowDelivered && !wasDelivered) {
+      // Deduct stock
+      products = p.products.map(pr => {
+        const ordered = items.filter(it => it.product === pr.name).reduce((a, it) => a + (+it.qty || 1), 0);
+        if (ordered > 0) return { ...pr, stock: Math.max(0, pr.stock - ordered) };
+        return pr;
+      });
+    } else if (!nowDelivered && wasDelivered) {
+      // Restore stock (order was un-delivered)
+      products = p.products.map(pr => {
+        const ordered = items.filter(it => it.product === pr.name).reduce((a, it) => a + (+it.qty || 1), 0);
+        if (ordered > 0) return { ...pr, stock: pr.stock + ordered };
+        return pr;
+      });
+    }
+    return { ...p, products, orders: p.orders.map(o => o.id === id ? { ...o, status: s } : o) };
+  });
   const copyPhone = ph => {navigator.clipboard?.writeText(ph).catch(()=>{});setCopied(ph);setTimeout(()=>setCopied(null),1500);};
 
   const filtered = data.orders
@@ -3660,8 +3710,6 @@ const ADMIN_CSS = `
     background:rgba(255,255,255,0.07) !important; color:#e8e6f8 !important;
     border-color:rgba(255,255,255,0.12) !important;
   }
-  .adm-dark select { color-scheme: dark; }
-  .adm-dark select option { background:#1f2937 !important; color:#e8e6f8 !important; }
   .adm-dark input::placeholder, .adm-dark textarea::placeholder { color:rgba(255,255,255,0.25) !important; }
   .adm-dark input:focus, .adm-dark select:focus, .adm-dark textarea:focus {
     outline:none !important;
