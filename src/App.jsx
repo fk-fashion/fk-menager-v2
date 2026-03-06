@@ -3924,8 +3924,8 @@ function AdminApp({ onBack }) {
   }, []);
 
   useEffect(() => {
-    // Offline safety net — if Firebase auth doesn't resolve within 4s,
-    // assume we're offline and load from local data immediately
+    // Offline safety net — if Firebase auth doesn't resolve within 4s and we're offline,
+    // load from localStorage immediately so app doesn't freeze
     const offlineTimer = setTimeout(() => {
       if (!navigator.onLine) {
         const local = loadLocal();
@@ -3933,7 +3933,6 @@ function AdminApp({ onBack }) {
           setDataRaw(local);
           setUser({ email: ADMIN_EMAILS[0], isAnonymous: false, _offlineMode: true });
           setDbStatus("offline");
-          setSyncMsg("");
         }
       }
     }, 4000);
@@ -3946,13 +3945,39 @@ function AdminApp({ onBack }) {
         const isAuthorizedAdmin = u && !u.isAnonymous && ADMIN_EMAILS.includes(u.email?.toLowerCase());
         if (isAuthorizedAdmin) {
           setDbStatus("syncing"); setSyncMsg("Loading...");
+
+          // CRITICAL: flush any offline queue FIRST before loading from Firebase
+          // This ensures offline changes are not overwritten by the older Firebase copy
+          const queue = getOfflineQueue();
+          if (queue.length > 0) {
+            try {
+              await flushOfflineQueue();
+            } catch(_) {}
+          }
+
+          // Now load from Firebase (which now has our offline changes)
           const fbData = await loadFromFirebase();
-          if (fbData) { setDataRaw(fbData); setCachedData(fbData); saveLocal(fbData); setDbStatus("synced"); setSyncMsg("Synced ✓"); setTimeout(()=>setSyncMsg(""),2500); }
-          else { await saveToFirebase(data); setDbStatus("synced"); setSyncMsg("Uploaded ✓"); setTimeout(()=>setSyncMsg(""),2500); }
+          if (fbData) {
+            setDataRaw(fbData); setCachedData(fbData); saveLocal(fbData);
+            setDbStatus("synced"); setSyncMsg("Synced ✓"); setTimeout(()=>setSyncMsg(""),2500);
+          } else {
+            // Nothing in Firebase yet — push local data up
+            const local = loadLocal();
+            await saveToFirebase(local);
+            setDbStatus("synced"); setSyncMsg("Uploaded ✓"); setTimeout(()=>setSyncMsg(""),2500);
+          }
+
           const { db } = getFirebase();
           if (unsub2Ref.current) unsub2Ref.current();
           unsub2Ref.current = onSnapshot(doc(db,"fk_fashion","data"), snap => {
-            if (snap.exists()) { const d=snap.data(); setDataRaw(d); setCachedData(d); saveLocal(d); setDbStatus("synced"); }
+            if (snap.exists()) {
+              // Only update from Firestore if there's no pending offline queue
+              // to avoid overwriting unsaved local changes
+              if (!getOfflineQueue().length) {
+                const d = snap.data();
+                setDataRaw(d); setCachedData(d); saveLocal(d); setDbStatus("synced");
+              }
+            }
           }, () => setDbStatus("error"));
         } else {
           setDbStatus("local");
@@ -3965,13 +3990,14 @@ function AdminApp({ onBack }) {
   const setData = useCallback(updater => {
     setDataRaw(prev => {
       const next = typeof updater==="function" ? updater(prev) : updater;
+      // saveLocal is synchronous — data is safe even if app closes before timer fires
       saveLocal(next);
+      // Always queue immediately as a safety net — cleared after successful Firebase save
+      addToOfflineQueue(next);
       if(saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async()=>{
         if (!navigator.onLine) {
-          addToOfflineQueue(next);
           setDbStatus("offline");
-          setSyncMsg("📴 Offline — saved locally, will sync when online");
           return;
         }
         try{
@@ -3980,8 +4006,6 @@ function AdminApp({ onBack }) {
           setDbStatus("synced");
           setSyncMsg("");
         } catch(_){
-          // Save to queue so it syncs when back online
-          addToOfflineQueue(next);
           setDbStatus("offline");
           setSyncMsg("📴 Offline — saved locally");
         }
