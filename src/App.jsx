@@ -1893,7 +1893,8 @@ function Dashboard({ data, setData, t, showReport, setSection }) {
 }
 
 // ─── ADMIN: CATALOGUE (multi-image) ───────────────────────────────
-const BP = {name:"",nameBn:"",category:"Bridal",price:"",stock:"",desc:"",sku:"",colorVariants:[{color:"",images:[]}]};
+const BP = {name:"",nameBn:"",category:"Bridal",price:"",stock:"",desc:"",sku:"",stockStatus:"Ready",colorVariants:[{color:"",images:[]}]};
+const STOCK_STATUSES = ["Ready","Need to Make","Making","Need Stock","Coming Soon","Pre-Order"];
 function Catalogue({ data, setData, t, showReport }) {
   const [modal, setModal] = useState(false), [editId, setEditId] = useState(null), [viewP, setViewP] = useState(null);
   const [filter, setFilter] = useState("All"), [search, setSearch] = useState(""), [sort, setSort] = useState("name");
@@ -1968,6 +1969,10 @@ function Catalogue({ data, setData, t, showReport }) {
                 <div className="flex items-center gap-1 mt-1.5 flex-wrap">
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${t.pill}`}>{p.category}</span>
                   {colorCount > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full ${t.dark?"bg-purple-900/40 text-purple-300":"bg-purple-50 text-purple-600"}`}>{colorCount} color{colorCount>1?"s":""}</span>}
+                  {p.stockStatus && p.stockStatus !== "Ready" && (() => {
+                    const ssC = {"Making":"bg-blue-100 text-blue-700","Need to Make":"bg-orange-100 text-orange-700","Need Stock":"bg-yellow-100 text-yellow-800","Coming Soon":"bg-purple-100 text-purple-700","Pre-Order":"bg-pink-100 text-pink-700"};
+                    return <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${ssC[p.stockStatus]||"bg-gray-100 text-gray-600"}`}>📌 {p.stockStatus}</span>;
+                  })()}
                 </div>
               </div>
             </div>
@@ -2026,6 +2031,9 @@ function Catalogue({ data, setData, t, showReport }) {
             <Inp label="Price ৳" type="number" min="0" value={form.price} onChange={e=>sf("price",e.target.value)} t={t} />
             <Inp label="Stock" type="number" min="0" value={form.stock} onChange={e=>sf("stock",e.target.value)} t={t} />
           </div>
+          <Sel label="Stock Status" value={form.stockStatus||"Ready"} onChange={e=>sf("stockStatus",e.target.value)} t={t}>
+            {STOCK_STATUSES.map(s=><option key={s}>{s}</option>)}
+          </Sel>
           <Txtarea label="Description" value={form.desc} onChange={e=>sf("desc",e.target.value)} t={t} />
           <div className={`border-t ${t.border} pt-4 mt-1`}>
             <ColorVariantEditor variants={form.colorVariants||[{color:"",images:[]}]} onChange={v=>sf("colorVariants",v)} t={t} />
@@ -2100,11 +2108,6 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
     }
     setForm(p => ({ ...p, items }));
   };
-  // Stock info helper
-  const getStock = (productName) => {
-    const pr = data.products.find(x => x.name === productName);
-    return pr ? pr.stock : null;
-  };
   const addItem = () => setForm(p => ({ ...p, items: [...p.items, { ...EMPTY_ITEM }] }));
   const delItem = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
 
@@ -2114,15 +2117,6 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
   const save = () => {
     if (!(form.customer || "").trim()) { alert("Please enter customer name."); return; }
     if (!form.items.length || !form.items[0].product) { alert("Please add at least one product."); return; }
-    // Stock check
-    for (const it of form.items) {
-      if (!it.product) continue;
-      const pr = data.products.find(x => x.name === it.product);
-      if (pr && pr.stock === 0) {
-        alert(`⛔ "${it.product}" is out of stock and cannot be ordered.`);
-        return;
-      }
-    }
     const cleanItems = form.items.map(it => ({
       product: it.product, color: it.color || "",
       qty: +it.qty || 1, unitPrice: +it.unitPrice || 0, subtotal: +it.subtotal || 0,
@@ -2183,17 +2177,41 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
             <div style={{marginBottom:6}}>
               <label className={`block text-xs ${t.sub} mb-1`}>Product *</label>
               <select value={item.product} onChange={e=>updItem(i,"product",e.target.value)}
-                className={`w-full border rounded-lg px-2 py-1.5 text-sm ${t.input}`} style={iStyle}>
+                className={`w-full border rounded-lg px-2 py-1.5 text-sm ${t.input}`}
+                style={{...iStyle, borderColor: item.product && data.products.find(p=>p.name===item.product)?.stock===0 ? "#ef4444" : undefined, colorScheme: t.dark?"dark":"light"}}>
                 <option value="">-- Select product --</option>
-                {data.products.map(p=><option key={p.id} value={p.name} disabled={p.stock===0}>{p.name} (৳{p.price}) {p.stock===0?"— OUT OF STOCK":`— ${p.stock} left`}</option>)}
+                {data.products.map(p => {
+                  const oos = p.stock === 0;
+                  const low = p.stock > 0 && p.stock <= 5;
+                  const ss = p.stockStatus && p.stockStatus !== "Ready" ? ` [${p.stockStatus}]` : "";
+                  const stockLabel = oos ? " ⚠ OUT OF STOCK" : low ? ` (${p.stock} left)` : ` (${p.stock})`;
+                  return <option key={p.id} value={p.name}>{p.name} ৳{p.price}{stockLabel}{ss}</option>;
+                })}
               </select>
-              {/* Stock warning below select */}
+              {/* Status badge below select */}
               {item.product && (() => {
-                const st = getStock(item.product);
-                if (st === null) return null;
-                if (st === 0) return <div style={{marginTop:4,fontSize:11,fontWeight:700,color:"#ef4444",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,padding:"4px 8px"}}>⛔ This product is out of stock</div>;
-                if (st <= 5) return <div style={{marginTop:4,fontSize:11,fontWeight:700,color:"#f97316",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"4px 8px"}}>⚠️ Only {st} left in stock</div>;
-                return <div style={{marginTop:4,fontSize:11,color:"#16a34a",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:6,padding:"4px 8px"}}>✓ {st} in stock</div>;
+                const pr = data.products.find(x => x.name === item.product);
+                if (!pr) return null;
+                const ss = pr.stockStatus || "Ready";
+                const oos = pr.stock === 0;
+                const low = pr.stock > 0 && pr.stock <= 5;
+                const statusColors = {
+                  "Ready":       {bg:"#f0fdf4",border:"#bbf7d0",color:"#16a34a"},
+                  "Making":      {bg:"#eff6ff",border:"#bfdbfe",color:"#2563eb"},
+                  "Need to Make":{bg:"#fff7ed",border:"#fed7aa",color:"#ea580c"},
+                  "Need Stock":  {bg:"#fef3c7",border:"#fde68a",color:"#d97706"},
+                  "Coming Soon": {bg:"#f5f3ff",border:"#ddd6fe",color:"#7c3aed"},
+                  "Pre-Order":   {bg:"#fdf2f8",border:"#fce7f3",color:"#be185d"},
+                };
+                const sc = oos ? {bg:"#fef2f2",border:"#fecaca",color:"#dc2626"} : low ? {bg:"#fff7ed",border:"#fed7aa",color:"#ea580c"} : statusColors[ss]||statusColors["Ready"];
+                return (
+                  <div style={{marginTop:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    {oos && <span style={{fontSize:11,fontWeight:700,background:sc.bg,border:`1px solid ${sc.border}`,color:sc.color,borderRadius:6,padding:"3px 8px"}}>⛔ Out of Stock</span>}
+                    {!oos && low && <span style={{fontSize:11,fontWeight:700,background:sc.bg,border:`1px solid ${sc.border}`,color:sc.color,borderRadius:6,padding:"3px 8px"}}>⚠️ Only {pr.stock} left</span>}
+                    {!oos && !low && <span style={{fontSize:11,background:"#f0fdf4",border:"1px solid #bbf7d0",color:"#16a34a",borderRadius:6,padding:"3px 8px"}}>✓ {pr.stock} in stock</span>}
+                    {ss !== "Ready" && <span style={{fontSize:11,fontWeight:700,background:statusColors[ss]?.bg||"#f5f3ff",border:`1px solid ${statusColors[ss]?.border||"#ddd6fe"}`,color:statusColors[ss]?.color||"#7c3aed",borderRadius:6,padding:"3px 8px"}}>📌 {ss}</span>}
+                  </div>
+                );
               })()}
             </div>
             {/* Color picker */}
@@ -2275,6 +2293,7 @@ function OrderModal({ data, editOrder, onSave, onClose, t }) {
 function Orders({ data, setData, t, showReport }) {
   const [modal, setModal] = useState(false), [editOrder, setEditOrder] = useState(null), [fSt, setFSt] = useState("All");
   const [search, setSearch] = useState(""), [cDel, setCDel] = useState(null), [copied, setCopied] = useState(null);
+  const [confirmBulk, setConfirmBulk] = useState(false);
 
   const save = (row) => {
     if (editOrder) {
@@ -2296,35 +2315,20 @@ function Orders({ data, setData, t, showReport }) {
     });
     setCDel(null);
   };
-  const chgSt = (id, s) => setData(p => {
-    const order = p.orders.find(o => o.id === id);
-    if (!order) return p;
-    const prevStatus = order.status;
-    const nowDelivered = s === "Delivered";
-    const wasDelivered = prevStatus === "Delivered";
-    // Get items from order
-    const items = order.items && order.items.length > 0
-      ? order.items
-      : [{ product: order.product, qty: order.qty || 1 }];
-    // Update products stock
-    let products = p.products;
-    if (nowDelivered && !wasDelivered) {
-      // Deduct stock
-      products = p.products.map(pr => {
-        const ordered = items.filter(it => it.product === pr.name).reduce((a, it) => a + (+it.qty || 1), 0);
-        if (ordered > 0) return { ...pr, stock: Math.max(0, pr.stock - ordered) };
-        return pr;
-      });
-    } else if (!nowDelivered && wasDelivered) {
-      // Restore stock (order was un-delivered)
-      products = p.products.map(pr => {
-        const ordered = items.filter(it => it.product === pr.name).reduce((a, it) => a + (+it.qty || 1), 0);
-        if (ordered > 0) return { ...pr, stock: pr.stock + ordered };
-        return pr;
-      });
-    }
-    return { ...p, products, orders: p.orders.map(o => o.id === id ? { ...o, status: s } : o) };
-  });
+  const bulkArchiveDelivered = () => {
+    setData(p => {
+      const toArchive = p.orders.filter(o => o.status === "Delivered");
+      if (!toArchive.length) return p;
+      const archiveDate = new Date().toISOString().split("T")[0];
+      return {
+        ...p,
+        orders: p.orders.filter(o => o.status !== "Delivered"),
+        archivedOrders: [...(p.archivedOrders || []), ...toArchive.map(o => ({ ...o, _archived: archiveDate }))]
+      };
+    });
+    setConfirmBulk(false);
+  };
+  const chgSt = (id,s) => setData(p=>({...p,orders:p.orders.map(o=>o.id===id?{...o,status:s}:o)}));
   const copyPhone = ph => {navigator.clipboard?.writeText(ph).catch(()=>{});setCopied(ph);setTimeout(()=>setCopied(null),1500);};
 
   const filtered = data.orders
@@ -2335,6 +2339,7 @@ function Orders({ data, setData, t, showReport }) {
   const rev=data.orders.reduce((a,o)=>a+(+o.paid||0),0);
   const allRevenue=[...(data.orders||[]),...(data.archivedOrders||[])].reduce((a,o)=>a+(+o.paid||0),0);
   const due=data.orders.reduce((a,o)=>a+Math.max(0,(+o.price||0)-(+o.paid||0)),0);
+  const deliveredCount = data.orders.filter(o=>o.status==="Delivered").length;
 
   return (
     <div>
@@ -2345,6 +2350,16 @@ function Orders({ data, setData, t, showReport }) {
         <div className={`${t.card} border rounded-xl p-3 text-center`}><div className={`text-xs ${t.sub}`}>Received</div><div className="text-green-500 font-bold text-lg">৳{rev.toLocaleString()}</div></div>
         <div className={`${t.card} border rounded-xl p-3 text-center`}><div className={`text-xs ${t.sub}`}>Due</div><div className="text-yellow-500 font-bold text-lg">৳{due.toLocaleString()}</div></div>
       </div>
+      {/* Bulk archive banner */}
+      {deliveredCount > 0 && (
+        <div style={{background:t.dark?"#14532d22":"#f0fdf4",border:`1px solid ${t.dark?"#166534":"#bbf7d0"}`,borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+          <span style={{fontSize:12,fontWeight:600,color:t.dark?"#86efac":"#16a34a"}}>✅ {deliveredCount} delivered order{deliveredCount>1?"s":""} ready to archive</span>
+          <button onClick={()=>setConfirmBulk(true)}
+            style={{fontSize:11,fontWeight:700,background:"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
+            📦 Archive All Delivered
+          </button>
+        </div>
+      )}
       <SearchBar value={search} onChange={setSearch} placeholder="Search customer or product..." t={t} />
       <Pills options={["All",...getCfg(data,"orderStatuses",ORDER_STATUSES)]} value={fSt} onChange={setFSt} t={t} />
       <div className="flex flex-col gap-3" style={{}}>
@@ -2404,6 +2419,7 @@ Total: ৳${(+o.price||0).toLocaleString()}, Paid: ৳${(+o.paid||0).toLocaleStr
       </div>
       {modal && <OrderModal data={data} editOrder={editOrder} onSave={save} onClose={()=>{setModal(false);setEditOrder(null);}} t={t} />}
       {cDel && <Confirm msg="Archive & remove this order? It will still appear in historical reports." onConfirm={()=>del(cDel)} onCancel={()=>setCDel(null)} t={t} />}
+      {confirmBulk && <Confirm msg={`Archive all ${deliveredCount} delivered orders? They will still appear in historical reports.`} onConfirm={bulkArchiveDelivered} onCancel={()=>setConfirmBulk(false)} t={t} />}
     </div>
   );
 }
