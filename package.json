@@ -10,8 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@imagekit/nodejs": "^7.3.0",
     "firebase": "^12.10.0",
-    "imagekit": "^6.0.0",
+    "firebase-admin": "^13.7.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
