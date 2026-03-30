@@ -4141,13 +4141,11 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
           const fbData = await loadFromFirebase();
           if (fbData) {
             setDataRaw(fbData); setCachedData(fbData); saveLocal(fbData);
-            setDbStatus("synced"); setSyncMsg("Synced ✓");
-            setTimeout(() => setSyncMsg(""), 2500);
+            setDbStatus("synced");
           } else {
             const local = loadLocal();
             await saveToFirebase(local);
-            setDbStatus("synced"); setSyncMsg("Uploaded ✓");
-            setTimeout(() => setSyncMsg(""), 2500);
+            setDbStatus("synced");
           }
           const { db } = getFirebase();
           if (unsub2Ref.current) unsub2Ref.current();
@@ -4156,32 +4154,18 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
 
 unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     if (!snap.exists()) return;
-
-    // Ignore snapshots that arrive within 4 seconds of our own save
-    // — these are just Firestore echoing our write back to us
-    const msSinceOurSave = Date.now() - lastSaveRef.current;
-    const isOurEcho = msSinceOurSave < 4000;
-
     const d = snap.data();
     applyServicesConfig(d.appConfig);
     applyAppConfig(d.settings);
     saveLocal(d);
-
+    // Only update React state on the very first snapshot.
+    // All subsequent snapshots are silent — they are either our own
+    // write echoing back, or background sync. No toast, no re-render.
     if (firstSnap) {
       firstSnap = false;
       setDataRaw(d);
       setCachedData(d);
-      setDbStatus("synced");
-      return; // no toast — initial load toast was already shown above
     }
-
-    // Skip state update if this is our own write echoing back
-    if (isOurEcho) return;
-
-    // Real update from another device/tab — apply it
-    setDataRaw(d);
-    setCachedData(d);
-    setDbStatus("synced");
   }, () => setDbStatus("error"));
 
 
@@ -4209,7 +4193,13 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
       if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
       saveTimerRef.current=setTimeout(async()=>{
         if(!navigator.onLine){setDbStatus("offline");return;}
-        try{await saveToFirebase(next);clearOfflineQueue();lastSaveRef.current = Date.now();setDbStatus("synced");}
+        try{
+  await saveToFirebase(next);
+  clearOfflineQueue();
+  setDbStatus("synced");
+  setSyncMsg("Saved ✓");
+  setTimeout(() => setSyncMsg(""), 1800);
+}
         catch(_){setDbStatus("offline");setSyncMsg("📴 Offline — saved locally");}
       },1200);
       return next;
