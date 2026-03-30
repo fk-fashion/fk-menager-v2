@@ -408,11 +408,12 @@ function loadLocal() {
 }
 
 // ─── FIREBASE CRUD ────────────────────────────────────────────────────────────
-async function saveToFirebase(data) {
+async function saveToFirebase(data, writerId) {
   try {
     const { db } = getFirebase();
     const slim = {
       ...data,
+      _lastWriterId: writerId || "unknown",
       products: data.products.map(p => ({
         ...p,
         colorVariants: (p.colorVariants||[]).map(v => ({
@@ -4079,7 +4080,8 @@ function AdminApp({ onBack }) {
   const t = getTheme(dark);
   const saveTimerRef = useRef(null);
   const unsub2Ref     = useRef(null);
-const lastSaveRef   = useRef(0); // timestamp of our last write to Firestore
+const lastSaveRef   = useRef(0);
+const sessionId     = useRef(Math.random().toString(36).slice(2)); // unique per tab
 
   // Online/offline tracking
 const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
@@ -4158,11 +4160,18 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     applyServicesConfig(d.appConfig);
     applyAppConfig(d.settings);
     saveLocal(d);
-    // Only update React state on the very first snapshot.
-    // All subsequent snapshots are silent — they are either our own
-    // write echoing back, or background sync. No toast, no re-render.
+
     if (firstSnap) {
+      // First connection — always apply
       firstSnap = false;
+      setDataRaw(d);
+      setCachedData(d);
+      return;
+    }
+
+    // If this write came from OUR session, skip — we already have
+    // the latest state in memory. If it came from another device/tab, apply it.
+    if (d._lastWriterId !== sessionId.current) {
       setDataRaw(d);
       setCachedData(d);
     }
@@ -4194,7 +4203,7 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
       saveTimerRef.current=setTimeout(async()=>{
         if(!navigator.onLine){setDbStatus("offline");return;}
         try{
-  await saveToFirebase(next);
+  await saveToFirebase(next, sessionId.current);
   clearOfflineQueue();
   setDbStatus("synced");
   setSyncMsg("Saved ✓");
