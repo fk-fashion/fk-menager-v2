@@ -20,38 +20,29 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── CAPACITOR PLATFORM DETECTION ────────────────────────────────────────────
-// Loaded async so it never blocks the web bundle
+let _isNative = false;
 
+const IS_NATIVE_PROMISE = import("@capacitor/core")
+  .then(mod => {
+    const cap = mod?.Capacitor ?? mod?.default?.Capacitor ?? null;
+    if (cap && cap.isNativePlatform()) _isNative = true;
+  })
+  .catch(() => {});
 
-//let Capacitor = { isNativePlatform: () => false };
-//let _capacitorLoaded = false;
-//const IS_NATIVE_PROMISE = import("@capacitor/core")
- // .then(mod => {
-   // const cap = mod?.Capacitor ?? mod?.default?.Capacitor ?? null;
-  //  if (cap) { Capacitor = cap; _capacitorLoaded = true; }
- // })
- // .catch(() => {});
-//function getIsNative() { return _capacitorLoaded && Capacitor.isNativePlatform(); }
+function getIsNative() { return _isNative; }
+
 // ─── NATIVE PLUGIN SETUP ─────────────────────────────────────────────────────
-// Called once on native app mount. Safe no-op on web.
 async function setupNativePlugins() {
   try {
     const { Capacitor } = await import("@capacitor/core");
-
-    // 🔥 IMPORTANT CHECK
     if (!Capacitor.isNativePlatform()) return;
-
     const { StatusBar, Style } = await import("@capacitor/status-bar");
     await StatusBar.setStyle({ style: Style.Dark });
     await StatusBar.setBackgroundColor({ color: "#060610" });
-
     const { SplashScreen } = await import("@capacitor/splash-screen");
     await SplashScreen.hide();
-
-  } catch (err) {
-    // optional: console.log(err);
-  }
-}                                                         // line 43
+  } catch (err) {}
+}
 
 // ─── LIGHTWEIGHT PUB/SUB STORE (Zustand-compatible, no npm needed) ────────────
 function createStore(initialState) {
@@ -4576,18 +4567,16 @@ function WebApp() {
 }
 
 // ─── ROOT EXPORT ──────────────────────────────────────────────────────────────
-// IS_NATIVE resolves asynchronously after Capacitor loads.
-// On web it's always false so WebApp renders immediately.
 export default function App() {
-  const [isNative, setIsNative] = useState(getIsNative());
+  const [isNative, setIsNative] = useState(false);
 
-  useEffect(()=>{
+  useEffect(() => {
     let cancelled = false;
-    IS_NATIVE_PROMISE.then(()=>{
+    IS_NATIVE_PROMISE.then(() => {
       if (!cancelled && getIsNative()) setIsNative(true);
     });
     return () => { cancelled = true; };
-  },[]);
+  }, []);
 
   if (isNative) return <NativeAdminApp />;
   return <WebApp />;
