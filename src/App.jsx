@@ -4417,6 +4417,7 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
             const oS=(data.products||[]).filter(p=>p.stock===0);
             const pn=(data.orders||[]).filter(o=>o.status==="Pending");
             if(!lS.length&&!oS.length&&!pn.length) return null;
+    if(section!=="dashboard"&&section!=="orders"&&section!=="catalogue") return null;
             return(
               <div style={{background:dark?"rgba(245,158,11,0.04)":"#fffbeb",borderBottom:`1px solid ${dark?"rgba(245,158,11,0.1)":"#fde68a"}`,padding:"5px 12px",display:"flex",gap:6,overflowX:"auto",overflowY:"visible",flexShrink:0,alignItems:"center",WebkitOverflowScrolling:"touch",scrollbarWidth:"none",flexWrap:"nowrap",width:"100%",boxSizing:"border-box"}}>
                 {pn.length>0&&<button onClick={()=>setSection("orders")} className="adm-alert-pill" style={{color:"#d97706",background:"rgba(245,158,11,0.08)",borderColor:"rgba(245,158,11,0.2)"}}>📦 {pn.length} Pending</button>}
@@ -4428,7 +4429,7 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
         </div>
 
         {/* Content */}
-        <div className="adm-content adm-fade" key={section}>{renderSection()}</div>
+        <div className="adm-content">{renderSection()}</div>
 
         {/* ── BOTTOM NAV (mobile) ── */}
         <nav className="adm-bottomnav" style={{background:topbarBg}}>
