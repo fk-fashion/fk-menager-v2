@@ -21,28 +21,37 @@ import {
 
 // ─── CAPACITOR PLATFORM DETECTION ────────────────────────────────────────────
 // Loaded async so it never blocks the web bundle
-let Capacitor = { isNativePlatform: () => false };
-let _capacitorLoaded = false;
-const IS_NATIVE_PROMISE = import("@capacitor/core")
-  .then(mod => {
-    const cap = mod?.Capacitor ?? mod?.default?.Capacitor ?? null;
-    if (cap) { Capacitor = cap; _capacitorLoaded = true; }
-  })
-  .catch(() => {});
-function getIsNative() { return _capacitorLoaded && Capacitor.isNativePlatform(); }
+
+
+//let Capacitor = { isNativePlatform: () => false };
+//let _capacitorLoaded = false;
+//const IS_NATIVE_PROMISE = import("@capacitor/core")
+ // .then(mod => {
+   // const cap = mod?.Capacitor ?? mod?.default?.Capacitor ?? null;
+  //  if (cap) { Capacitor = cap; _capacitorLoaded = true; }
+ // })
+ // .catch(() => {});
+//function getIsNative() { return _capacitorLoaded && Capacitor.isNativePlatform(); }
 // ─── NATIVE PLUGIN SETUP ─────────────────────────────────────────────────────
 // Called once on native app mount. Safe no-op on web.
 async function setupNativePlugins() {
   try {
+    const { Capacitor } = await import("@capacitor/core");
+
+    // 🔥 IMPORTANT CHECK
+    if (!Capacitor.isNativePlatform()) return;
+
     const { StatusBar, Style } = await import("@capacitor/status-bar");
     await StatusBar.setStyle({ style: Style.Dark });
     await StatusBar.setBackgroundColor({ color: "#060610" });
-  } catch(_) {}
-  try {
+
     const { SplashScreen } = await import("@capacitor/splash-screen");
     await SplashScreen.hide();
-  } catch(_) {}
-}                                                          // line 43
+
+  } catch (err) {
+    // optional: console.log(err);
+  }
+}                                                         // line 43
 
 // ─── LIGHTWEIGHT PUB/SUB STORE (Zustand-compatible, no npm needed) ────────────
 function createStore(initialState) {
