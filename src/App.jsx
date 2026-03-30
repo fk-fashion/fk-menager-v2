@@ -4078,7 +4078,8 @@ function AdminApp({ onBack }) {
   const [syncMsg, setSyncMsg] = useState("");
   const t = getTheme(dark);
   const saveTimerRef = useRef(null);
-  const unsub2Ref    = useRef(null);
+  const unsub2Ref     = useRef(null);
+const lastSaveRef   = useRef(0); // timestamp of our last write to Firestore
 
   // Online/offline tracking
 const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
@@ -4154,25 +4155,32 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
 
 
 unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
-    if (!snap.exists() || getOfflineQueue().length) return;
+    if (!snap.exists()) return;
+
+    // Ignore snapshots that arrive within 4 seconds of our own save
+    // — these are just Firestore echoing our write back to us
+    const msSinceOurSave = Date.now() - lastSaveRef.current;
+    const isOurEcho = msSinceOurSave < 4000;
+
     const d = snap.data();
     applyServicesConfig(d.appConfig);
     applyAppConfig(d.settings);
     saveLocal(d);
+
     if (firstSnap) {
       firstSnap = false;
-      setDataRaw(d); setCachedData(d);
-      setDbStatus("synced");
-      setSyncMsg("Synced ✓");
-      setTimeout(() => setSyncMsg(""), 2500);
-      return;
-    }
-    // After first load: only update state if snapshot came from
-    // another device/tab, not our own save echoing back
-    if (!getOfflineQueue().length) {
       setDataRaw(d);
       setCachedData(d);
+      setDbStatus("synced");
+      return; // no toast — initial load toast was already shown above
     }
+
+    // Skip state update if this is our own write echoing back
+    if (isOurEcho) return;
+
+    // Real update from another device/tab — apply it
+    setDataRaw(d);
+    setCachedData(d);
     setDbStatus("synced");
   }, () => setDbStatus("error"));
 
@@ -4201,7 +4209,7 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
       if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
       saveTimerRef.current=setTimeout(async()=>{
         if(!navigator.onLine){setDbStatus("offline");return;}
-        try{await saveToFirebase(next);clearOfflineQueue();setDbStatus("synced");}
+        try{await saveToFirebase(next);clearOfflineQueue();lastSaveRef.current = Date.now();setDbStatus("synced");}
         catch(_){setDbStatus("offline");setSyncMsg("📴 Offline — saved locally");}
       },1200);
       return next;
