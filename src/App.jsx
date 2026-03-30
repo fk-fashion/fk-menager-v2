@@ -4136,7 +4136,7 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
           try { localStorage.removeItem("fk_admin_session"); } catch(_) {}
         }
         if (isAdmin) {
-          setDbStatus("syncing"); setSyncMsg("Loading...");
+          setDbStatus("syncing");
           if (getOfflineQueue().length > 0) { try { await flushOfflineQueue(); } catch(_) {} }
           const fbData = await loadFromFirebase();
           if (fbData) {
