@@ -331,12 +331,14 @@ function clearOfflineQueue()    { try { localStorage.removeItem(OFFLINE_QUEUE_KE
 async function flushOfflineQueue() {
   const queue = getOfflineQueue();
   if (!queue.length) return false;
+  // Always flush the LATEST queued snapshot (earlier ones are superseded)
   const latest = queue[queue.length - 1];
   try {
     await saveToFirebase(latest.data, "offline-flush");
     clearOfflineQueue();
     return true;
-  } catch(_) {
+  } catch(e) {
+    console.warn("flushOfflineQueue failed:", e.message);
     return false;
   }
 }
@@ -426,26 +428,42 @@ function loadLocal() {
 }
 
 // ─── FIREBASE CRUD ────────────────────────────────────────────────────────────
-let _saveInFlight = false;
+let _saveInFlight  = false;
+let _pendingWrite  = null;   // holds the latest data waiting to be written
+
 async function saveToFirebase(data, writerId) {
+  // Always store the latest data so we never write a stale snapshot
+  _pendingWrite = { data, writerId };
+
+  // If a write is already running, it will pick up _pendingWrite when it finishes
   if (_saveInFlight) return;
-  _saveInFlight = true;
-  try {
-    const { db } = getFirebase();
-    const slim = {
-      ...data,
-      _lastWriterId: writerId || "unknown",
-      _lastWriteTime: Date.now(),
-      products: data.products.map(p => ({
-        ...p,
-        colorVariants: (p.colorVariants||[]).map(v => ({
-          ...v, images: (v.images||[]).filter(img => img && img.startsWith("https://"))
+
+  while (_pendingWrite) {
+    const { data: d, writerId: wid } = _pendingWrite;
+    _pendingWrite   = null;
+    _saveInFlight   = true;
+    try {
+      const { db } = getFirebase();
+      const slim = {
+        ...d,
+        _lastWriterId:  wid || "unknown",
+        _lastWriteTime: Date.now(),
+        products: (d.products || []).map(p => ({
+          ...p,
+          colorVariants: (p.colorVariants||[]).map(v => ({
+            ...v, images: (v.images||[]).filter(img => img && img.startsWith("https://"))
+          }))
         }))
-      }))
-    };
-    await setDoc(doc(db, "fk_fashion", "data"), slim);
-  } catch(e) { console.error("Firebase save error:", e); }
-  finally { _saveInFlight = false; }
+      };
+      await setDoc(doc(db, "fk_fashion", "data"), slim);
+    } catch(e) {
+      console.error("Firebase save error:", e);
+      throw e;  // re-throw so caller can handle
+    } finally {
+      _saveInFlight = false;
+    }
+    // If another write came in while we were saving, loop and write it too
+  }
 }
 
 async function loadFromFirebase() {
@@ -4223,28 +4241,48 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── setData — stable callback, saves locally + debounces Firebase write ──
+  // ── latestDataRef: always holds the most recent data for the debounced writer ──
+  const latestDataRef = useRef(null);
+
+  // ── setData — updates state, saves locally immediately, debounces Firebase write ──
   const setData = useCallback((updater) => {
     setDataRaw((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
+
+      // 1. Save to localStorage immediately (instant, no data loss)
       saveLocal(next);
       addToOfflineQueue(next);
+
+      // 2. Always keep a ref to the LATEST data for the debounced writer
+      latestDataRef.current = next;
+
+      // 3. Debounce the Firebase write — timer reset on every change,
+      //    but when it fires it always writes the LATEST snapshot via the ref
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async () => {
-        if (!navigator.onLine) { setDbStatus("offline"); return; }
+        const toWrite = latestDataRef.current;
+        if (!toWrite) return;
+
+        if (!navigator.onLine) {
+          setDbStatus("offline");
+          return;
+        }
+
+        setDbStatus("syncing");
         try {
-          setDbStatus("syncing");
-          await saveToFirebase(next, sessionId.current);
+          await saveToFirebase(toWrite, sessionId.current);
           clearOfflineQueue();
           setDbStatus("synced");
           setSyncMsg("Saved ✓");
-          setTimeout(() => setSyncMsg(""), 1800);
+          setTimeout(() => setSyncMsg(""), 2000);
         } catch (_) {
+          // Save failed — keep data in offline queue for auto-retry on reconnect
           setDbStatus("error");
-          setSyncMsg("📴 Offline — saved locally");
+          setSyncMsg("Save failed — kept locally");
           setTimeout(() => setDbStatus("offline"), 3000);
         }
-      }, 3000);  // 3s debounce — prevents Firestore write-stream exhaustion
+      }, 800);  // 800ms debounce: fast enough to feel instant, safe for Firestore
+
       return next;
     });
   }, []);
