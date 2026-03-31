@@ -426,7 +426,10 @@ function loadLocal() {
 }
 
 // ─── FIREBASE CRUD ────────────────────────────────────────────────────────────
+let _saveInFlight = false;
 async function saveToFirebase(data, writerId) {
+  if (_saveInFlight) return;
+  _saveInFlight = true;
   try {
     const { db } = getFirebase();
     const slim = {
@@ -442,6 +445,7 @@ async function saveToFirebase(data, writerId) {
     };
     await setDoc(doc(db, "fk_fashion", "data"), slim);
   } catch(e) { console.error("Firebase save error:", e); }
+  finally { _saveInFlight = false; }
 }
 
 async function loadFromFirebase() {
@@ -4229,16 +4233,18 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
       saveTimerRef.current = setTimeout(async () => {
         if (!navigator.onLine) { setDbStatus("offline"); return; }
         try {
+          setDbStatus("syncing");
           await saveToFirebase(next, sessionId.current);
           clearOfflineQueue();
           setDbStatus("synced");
           setSyncMsg("Saved ✓");
           setTimeout(() => setSyncMsg(""), 1800);
         } catch (_) {
-          setDbStatus("offline");
+          setDbStatus("error");
           setSyncMsg("📴 Offline — saved locally");
+          setTimeout(() => setDbStatus("offline"), 3000);
         }
-      }, 1200);
+      }, 3000);  // 3s debounce — prevents Firestore write-stream exhaustion
       return next;
     });
   }, []);
@@ -4338,6 +4344,9 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
   const syncColor=dbStatus==="synced"?"#4ade80":dbStatus==="syncing"?"#fbbf24":dbStatus==="error"?"#f87171":dbStatus==="offline"?"#fb923c":"#64748b";
   const syncIcon =dbStatus==="synced"?"●":dbStatus==="syncing"?"◌":dbStatus==="error"?"⚠":dbStatus==="offline"?"📴":"●";
   const syncLabel=dbStatus==="synced"?"Synced":dbStatus==="syncing"?"Saving...":dbStatus==="error"?"Error":dbStatus==="offline"?"Offline":"Local";
+
+  // ── showReport: open the full-screen ReportViewer overlay ──
+  const showReport = (r) => setReport(r);
 
   const bg        = dark?"#060610":"#f0f2f7";
   const sidebarBg = dark?"#06060f":"#ffffff";
