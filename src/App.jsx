@@ -414,6 +414,7 @@ async function saveToFirebase(data, writerId) {
     const slim = {
       ...data,
       _lastWriterId: writerId || "unknown",
+      _lastWriteTime: Date.now(),
       products: data.products.map(p => ({
         ...p,
         colorVariants: (p.colorVariants||[]).map(v => ({
@@ -4164,17 +4165,18 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
 
     if (listenerFirstSnap) {
       listenerFirstSnap = false;
-      // On first connect, apply whatever is in Firestore
       setDataRaw(d);
       setCachedData(d);
       return;
     }
 
-    // After first snapshot, only apply if from a DIFFERENT device/tab
-    if (d._lastWriterId !== sessionId.current) {
-      setDataRaw(d);
-      setCachedData(d);
-    }
+    // Only skip if this exact tab wrote it AND it was recent (within 5 seconds)
+    const writerMatch = d._lastWriterId === sessionId.current;
+    const writeAge = Date.now() - (d._lastWriteTime || 0);
+    if (writerMatch && writeAge < 5000) return;
+
+    setDataRaw(d);
+    setCachedData(d);
   }, () => setDbStatus("error"));
 
 
