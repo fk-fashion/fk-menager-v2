@@ -4151,9 +4151,10 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
           }
           const { db } = getFirebase();
           if (unsub2Ref.current) unsub2Ref.current();
-          let firstSnap = true;
+          
 
-
+// ADD THIS (firstSnap is now outside the callback):
+let listenerFirstSnap = true;
 unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     if (!snap.exists()) return;
     const d = snap.data();
@@ -4161,16 +4162,15 @@ unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     applyAppConfig(d.settings);
     saveLocal(d);
 
-    if (firstSnap) {
-      // First connection — always apply
-      firstSnap = false;
+    if (listenerFirstSnap) {
+      listenerFirstSnap = false;
+      // On first connect, apply whatever is in Firestore
       setDataRaw(d);
       setCachedData(d);
       return;
     }
 
-    // If this write came from OUR session, skip — we already have
-    // the latest state in memory. If it came from another device/tab, apply it.
+    // After first snapshot, only apply if from a DIFFERENT device/tab
     if (d._lastWriterId !== sessionId.current) {
       setDataRaw(d);
       setCachedData(d);
