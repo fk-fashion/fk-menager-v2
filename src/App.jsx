@@ -82,13 +82,16 @@ function applyServicesConfig(appConfig) {
 }
 /** Called whenever we receive settings from Firestore or localStorage */
 function applyAppConfig(settings) {
-  if (settings?.appName   && settings.appName.trim())   APP_NAME    = settings.appName.trim();
-  if (settings?.appNameBn && settings.appNameBn.trim()) APP_NAME_BN = settings.appNameBn.trim();
+  if (!settings) return;
+  try {
+    if (settings.appName   && typeof settings.appName   === "string" && settings.appName.trim())   APP_NAME    = settings.appName.trim();
+    if (settings.appNameBn && typeof settings.appNameBn === "string" && settings.appNameBn.trim()) APP_NAME_BN = settings.appNameBn.trim();
+  } catch(_) {}
 }
 // ─── APP-LEVEL DATA & IMAGE CACHE STORES ─────────────────────────────────────
 const imageCache = createStore({ urlMap: {}, loading: {} });
 function useImageCache() {
-  const [cache, setCache] = useState(imageCache.getState);
+  const [cache, setCache] = useState(() => imageCache.getState());
   useEffect(() => imageCache.subscribe(setCache), []);
   return {
     cache: cache.urlMap,
@@ -100,7 +103,7 @@ function useImageCache() {
 
 const appDataStore = createStore({ data: null, initialized: false });
 function useAppData() {
-  const [store, setStore] = useState(appDataStore.getState);
+  const [store, setStore] = useState(() => appDataStore.getState());
   useEffect(() => appDataStore.subscribe(setStore), []);
   return {
     cachedData:    store.data,
@@ -202,9 +205,10 @@ async function uploadToImageKit(file, onProgress) {
     const safeExt = ["jpg","jpeg","png","webp","gif"].includes(ext) ? ext : "jpg";
 
     const formData = new FormData();
-    formData.append("file",      blob, `fk_${Date.now()}.${safeExt}`);
+    const fileTs = Date.now();
+    formData.append("file",      blob, `fk_${fileTs}.${safeExt}`);
     formData.append("publicKey", publicKey);
-    formData.append("fileName",  `fk_${Date.now()}_${Math.random().toString(36).slice(2)}.${safeExt}`);
+    formData.append("fileName",  `fk_${fileTs}_${Math.random().toString(36).slice(2)}.${safeExt}`);
     formData.append("folder",    folder);
     formData.append("token",     token);
     formData.append("expire",    String(expire));
@@ -418,7 +422,7 @@ function loadLocal() {
       return _buildMergedData({ ...d, products });
     }
   } catch(_) {}
-  return { ...INIT_DATA, products:[], orders:[], money:[], materials:[], workers:[], expenses:[] };
+  return { ...INIT_DATA };
 }
 
 // ─── FIREBASE CRUD ────────────────────────────────────────────────────────────
@@ -448,7 +452,8 @@ async function loadFromFirebase() {
       const d = snap.data();
       applyServicesConfig(d.appConfig);
       applyAppConfig(d.settings);
-      return _buildMergedData(d);
+      const products = mergeImagesIntoProducts(d.products || [], loadImagesLocal());
+      return _buildMergedData({ ...d, products });
     }
   } catch(e) { console.error("Firebase load:", e); }
   return null;
@@ -504,7 +509,9 @@ async function placePublicOrder(order) {
     return true;
   } catch(e) {
     console.error("placePublicOrder:", e);
-    _publicOrderTimestamps.pop(); // rollback the rate-limit count on failure
+    // rollback the rate-limit count on failure
+    const idx = _publicOrderTimestamps.indexOf(now);
+    if (idx !== -1) _publicOrderTimestamps.splice(idx, 1);
     return false;
   }
 }
@@ -543,7 +550,7 @@ function compressImage(file, callback) {
       canvas.getContext("2d").drawImage(img, 0, 0, width, height);
       callback(canvas.toDataURL("image/jpeg", 0.72));
     };
-    img.onerror = () => callback(ev.target.result);
+    img.onerror = () => callback(ev.target.result || null);
     img.src = ev.target.result;
   };
   reader.onerror = () => callback(null);
@@ -554,7 +561,7 @@ function waLink(phone, msg) {
   const digits = (phone || "").replace(/\D/g, "");
   let intl;
   if      (digits.startsWith("880")) intl = digits;
-  else if (digits.startsWith("88") && !digits.startsWith("880")) intl = "880" + digits.slice(2);
+  else if (digits.startsWith("88")  && digits.length >= 11)  intl = "880" + digits.slice(2);
   else if (digits.startsWith("0"))   intl = "880" + digits.slice(1);
   else                               intl = "880" + digits;
   return `https://wa.me/${intl}?text=${encodeURIComponent(msg)}`;
@@ -1052,7 +1059,7 @@ function Modal({ title, onClose, children, wide, t }) {
     return () => { window.removeEventListener("keydown", h); if (!wasLocked) document.body.style.overflow = ""; };
   }, [onClose]);
 
-  const isMobile = window.innerWidth < 768;
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const modalBg  = t.dark ? "#12121f" : "#ffffff";
   const closeBg  = t.dark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.07)";
   const closeCol = t.dark ? "#e8e6f8" : "#374151";
@@ -1541,7 +1548,8 @@ function StoreProductDetail({ product, onBack, cart, onAddToCart, onGoToCart, ca
   useEffect(() => { window.scrollTo(0, 0); }, [product]);
   useEffect(() => {
     let mq; try { mq = window.matchMedia("(min-width:640px)"); } catch(_) { return; }
-    const h = e => setIsWide(e.matches); setIsWide(mq.matches);
+    const h = e => setIsWide(e.matches);
+    setIsWide(mq.matches);
     if (mq.addEventListener) mq.addEventListener("change",h); else mq.addListener(h);
     return () => { if (mq.removeEventListener) mq.removeEventListener("change",h); else mq.removeListener(h); };
   }, []);
@@ -4092,14 +4100,13 @@ function AdminApp({ onBack }) {
   const [user,    setUser]    = useState(undefined);
   const [dbStatus,setDbStatus]= useState("local");
   const [syncMsg, setSyncMsg] = useState("");
-  const t = getTheme(dark);
+  const t          = getTheme(dark);
   const saveTimerRef = useRef(null);
-  const unsub2Ref     = useRef(null);
-const lastSaveRef   = useRef(0);
-const sessionId     = useRef(Math.random().toString(36).slice(2)); // unique per tab
+  const unsub2Ref    = useRef(null);
+  const sessionId    = useRef(Math.random().toString(36).slice(2)); // unique per tab
 
   // Online/offline tracking
-const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   useEffect(()=>{
     const goOnline  = async()=>{ setIsOnline(true); const flushed=await flushOfflineQueue(); if(flushed){setDbStatus("synced");setSyncMsg("Back online — synced ✓");setTimeout(()=>setSyncMsg(""),3000);} };
@@ -4165,13 +4172,13 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
             setDbStatus("synced");
           }
           const { db } = getFirebase();
-          if (unsub2Ref.current) unsub2Ref.current();
-          
+          if (unsub2Ref.current) {
+  unsub2Ref.current();
+  unsub2Ref.current = null;
+}
 
-// ADD THIS (firstSnap is now outside the callback):
-if (!unsub2Ref.current) {
-  let listenerFirstSnap = true;
-  unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
+let listenerFirstSnap = true;
+unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     if (!snap.exists()) return;
     const d = snap.data();
 
@@ -4191,81 +4198,94 @@ if (!unsub2Ref.current) {
       return;
     }
 
-    // Skip update if this tab wrote it recently (prevents echo updates)
     const writerMatch = d._lastWriterId === sessionId.current;
-    const writeAge = Date.now() - (d._lastWriteTime || 0);
-if (writerMatch && writeAge < 10000) return;  // 10s is safer
+    const writeAge    = Date.now() - (d._lastWriteTime || 0);
+    if (writerMatch && writeAge < 10000) return;
 
     setDataRaw(merged);
     setCachedData(merged);
-  }, (err) => {
-    console.error("Snapshot error:", err.code);
-    setDbStatus("error");
+    setDbStatus("synced");
+    // Skip update if this tab wrote it recently (prevents echo updates)
   });
-}
-
-
-        } else {
-          setDbStatus("local");
         }
       });
-    } catch(_) {
-      clearTimeout(offlineTimer);
-      setDbStatus("local");
-      setUser(null);
-    }
-
+    } catch(e) { console.error("AdminApp auth error:", e); clearTimeout(offlineTimer); setUser(null); }
     return () => {
       clearTimeout(offlineTimer);
       unsub();
-      if (unsub2Ref.current) unsub2Ref.current();
+      if (unsub2Ref.current) { unsub2Ref.current(); unsub2Ref.current = null; }
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [setCachedData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const setData = useCallback(updater=>{
-    setDataRaw(prev=>{
-      const next=typeof updater==="function"?updater(prev):updater;
-      saveLocal(next); addToOfflineQueue(next);
-      if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
-      saveTimerRef.current=setTimeout(async()=>{
-        if(!navigator.onLine){setDbStatus("offline");return;}
-        try{
-  await saveToFirebase(next, sessionId.current);
-  clearOfflineQueue();
-  setDbStatus("synced");
-  setSyncMsg("Saved ✓");
-  setTimeout(() => setSyncMsg(""), 1800);
-}
-        catch(_){setDbStatus("offline");setSyncMsg("📴 Offline — saved locally");}
-      },1200);
+  // ── setData — stable callback, saves locally + debounces Firebase write ──
+  const setData = useCallback((updater) => {
+    setDataRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveLocal(next);
+      addToOfflineQueue(next);
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(async () => {
+        if (!navigator.onLine) { setDbStatus("offline"); return; }
+        try {
+          await saveToFirebase(next, sessionId.current);
+          clearOfflineQueue();
+          setDbStatus("synced");
+          setSyncMsg("Saved ✓");
+          setTimeout(() => setSyncMsg(""), 1800);
+        } catch (_) {
+          setDbStatus("offline");
+          setSyncMsg("📴 Offline — saved locally");
+        }
+      }, 1200);
       return next;
     });
-  },[]);
+  }, []);
 
-  const [globalSearch,    setGlobalSearch]    = useState("");
-  const [showGlobalSearch,setShowGlobalSearch]= useState(false);
+  const [globalSearch,     setGlobalSearch]     = useState("");
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
 
-  const globalSearchResults = useMemo(()=>{
-    const q=globalSearch.toLowerCase().trim();
-    if(!q||q.length<2) return null;
-    const orders   =(data.orders||[]).filter(o=>o.customer.toLowerCase().includes(q)||(o.phone||"").includes(q)||(o.product||"").toLowerCase().includes(q));
-    const products =(data.products||[]).filter(p=>p.name.toLowerCase().includes(q)||(p.nameBn||"").includes(q)||(p.sku||"").toLowerCase().includes(q));
-    const customers={};
-    (data.orders||[]).forEach(o=>{if(o.phone&&(o.customer.toLowerCase().includes(q)||o.phone.includes(q)))customers[o.phone]=o;});
-    return{orders:orders.slice(0,5),products:products.slice(0,5),customers:Object.values(customers).slice(0,4)};
-  },[globalSearch,data]);
+  const globalSearchResults = useMemo(() => {
+    const q = globalSearch.toLowerCase().trim();
+    if (!q || q.length < 2) return null;
+    const orders = (data.orders || []).filter(o =>
+      o.customer.toLowerCase().includes(q) ||
+      (o.phone || "").includes(q) ||
+      (o.product || "").toLowerCase().includes(q)
+    );
+    const products = (data.products || []).filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.nameBn || "").includes(q) ||
+      (p.sku || "").toLowerCase().includes(q)
+    );
+    const customers = {};
+    (data.orders || []).forEach(o => {
+      if (o.phone && (o.customer.toLowerCase().includes(q) || o.phone.includes(q))) {
+        customers[o.phone] = o;
+      }
+    });
+    return {
+      orders:    orders.slice(0, 5),
+      products:  products.slice(0, 5),
+      customers: Object.values(customers).slice(0, 4),
+    };
+  }, [globalSearch, data]);
 
-  const showReport = useCallback(r=>setReport(r),[]);
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       const { auth } = getFirebase();
       await signOut(auth);
-      try { localStorage.removeItem("fk_admin_session"); } catch(_) {}
+      try { localStorage.removeItem("fk_admin_session"); } catch (_) {}
       setUser(null);
       setDbStatus("local");
-    } catch(_) {}
-  };
-  useEffect(()=>{ document.body.classList.add("adm-active"); return()=>document.body.classList.remove("adm-active"); },[]);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.add("adm-active");
+    return () => document.body.classList.remove("adm-active");
+  }, []);
 
   // PWA meta + service worker
   useEffect(()=>{
@@ -4490,24 +4510,32 @@ if (writerMatch && writeAge < 10000) return;  // 10s is safer
 // full web AdminApp. It re-uses the same AdminApp shell for now — extend here
 // with Capacitor-specific plugins (Camera, StatusBar, Haptics, etc.) as needed.
 function NativeAdminApp() {
-  const [mode, setMode] = useState("admin");
+  const [mode,      setMode]      = useState("admin");
+  const [storeData, setStoreData] = useState(null);
 
   useEffect(() => {
     setupNativePlugins();
   }, []);
+
+  // Load local data when switching to store view (never call loadLocal inside render)
+  useEffect(() => {
+    if (mode === "store") {
+      try { setStoreData(loadLocal()); } catch(_) { setStoreData(null); }
+    }
+  }, [mode]);
+
   // On native, show a lightweight store view without re-initializing Firebase
-  if (mode==="store") {
-    const storeData = loadLocal();
+  if (mode === "store") {
     return (
       <CustomerStore
         products={storeData?.products || []}
         waNumber={storeData?.settings?.waNumber}
         waTemplate={storeData?.appConfig?.waTemplate}
-        onGoAdmin={()=>setMode("admin")}
+        onGoAdmin={() => setMode("admin")}
       />
     );
   }
-  return <AdminApp onBack={()=>setMode("store")} />;
+  return <AdminApp onBack={() => setMode("store")} />;
 }
 
 // ─── WEB APP (router) ─────────────────────────────────────────────────────────
@@ -4564,8 +4592,9 @@ function WebApp() {
   // Sync adminEmails from Firestore appConfig to ADMIN_EMAILS array
   useEffect(()=>appDataStore.subscribe(s=>{
     if(s.data?.appConfig?.adminEmails?.length){
-      ADMIN_EMAILS.length=0;
-      s.data.appConfig.adminEmails.forEach(e=>ADMIN_EMAILS.push(e.toLowerCase().trim()));
+      const updated = s.data.appConfig.adminEmails.map(e=>e.toLowerCase().trim());
+      // Safely replace contents without breaking other references
+      ADMIN_EMAILS.splice(0, ADMIN_EMAILS.length, ...updated);
     }
   }),[]);
 
