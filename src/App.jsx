@@ -314,13 +314,27 @@ const IMG_KEY           = "fk_fashion_imgs_v7";
 const OFFLINE_QUEUE_KEY = "fk_offline_queue_v1";
 
 function getOfflineQueue()      { try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || "[]"); } catch(_) { return []; } }
-function addToOfflineQueue(data){ try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify([{ data, ts: Date.now() }])); } catch(_) {} }
+function addToOfflineQueue(data) {
+  try {
+    const queue = getOfflineQueue();
+    queue.push({ data, ts: Date.now() });
+    // Keep only the last 50 to avoid exceeding localStorage quota
+    const trimmed = queue.slice(-50);
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(trimmed));
+  } catch(_) {}
+}
 function clearOfflineQueue()    { try { localStorage.removeItem(OFFLINE_QUEUE_KEY); } catch(_) {} }
 async function flushOfflineQueue() {
   const queue = getOfflineQueue();
   if (!queue.length) return false;
-  try { await saveToFirebase(queue[queue.length - 1].data); clearOfflineQueue(); return true; }
-  catch(_) { return false; }
+  const latest = queue[queue.length - 1];
+  try {
+    await saveToFirebase(latest.data, "offline-flush");
+    clearOfflineQueue();
+    return true;
+  } catch(_) {
+    return false;
+  }
 }
 
 function saveImagesLocal(products) {
@@ -4155,29 +4169,40 @@ const [isOnline, setIsOnline] = useState(()=>navigator.onLine);
           
 
 // ADD THIS (firstSnap is now outside the callback):
-let listenerFirstSnap = true;
-unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
+if (!unsub2Ref.current) {
+  let listenerFirstSnap = true;
+  unsub2Ref.current = onSnapshot(doc(db, "fk_fashion", "data"), snap => {
     if (!snap.exists()) return;
     const d = snap.data();
-    applyServicesConfig(d.appConfig);
-    applyAppConfig(d.settings);
-    saveLocal(d);
+
+    // Always apply config updates
+    try { applyServicesConfig(d.appConfig); } catch(_) {}
+    try { applyAppConfig(d.settings); } catch(_) {}
+
+    // Merge images before saving/setting
+    const products = mergeImagesIntoProducts(d.products || [], loadImagesLocal());
+    const merged = _buildMergedData({ ...d, products });
+    saveLocal(merged);
 
     if (listenerFirstSnap) {
       listenerFirstSnap = false;
-      setDataRaw(d);
-      setCachedData(d);
+      setDataRaw(merged);
+      setCachedData(merged);
       return;
     }
 
-    // Only skip if this exact tab wrote it AND it was recent (within 5 seconds)
+    // Skip update if this tab wrote it recently (prevents echo updates)
     const writerMatch = d._lastWriterId === sessionId.current;
     const writeAge = Date.now() - (d._lastWriteTime || 0);
-    if (writerMatch && writeAge < 5000) return;
+if (writerMatch && writeAge < 10000) return;  // 10s is safer
 
-    setDataRaw(d);
-    setCachedData(d);
-  }, () => setDbStatus("error"));
+    setDataRaw(merged);
+    setCachedData(merged);
+  }, (err) => {
+    console.error("Snapshot error:", err.code);
+    setDbStatus("error");
+  });
+}
 
 
         } else {
